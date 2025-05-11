@@ -1,0 +1,68 @@
+{
+  "name": "Standard GC Run Profile",
+  "description": "A standard temperature and pressure ramp profile for gas chromatography",
+  "temperature_profile": [
+    {
+      "time": 0,
+      "value": 40.0,
+      "description": "Initial temperature"
+    },
+    {
+      "time": 60,
+      "value": 40.0,
+      "description": "Hold at initial temperature for 1 minute"
+    },
+    {
+      "time": 360,
+      "value": 200.0,
+      "description": "Ramp to 200°C at 0.8°C/sec over 5 minutes"
+    },
+    {
+      "time": 660,
+      "value": 200.0,
+      "description": "Hold at 200°C for 5 minutes"
+    },
+    {
+      "time": 840,
+      "value": 250.0,
+      "description": "Ramp to 250°C at 0.28°C/sec over 3 minutes"
+    },
+    {
+      "time": 1140,
+      "value": 250.0,
+      "description": "Hold at 250°C for 5 minutes"
+    },
+    {
+      "time": 1200,
+      "value": 40.0,
+      "description": "Cool down to 40°C for 1 minute"
+    }
+  ],
+  "pressure_profile": [
+    {
+      "time": 0,
+      "value": 15.0,
+      "description": "Initial pressure (PSI)"
+    },
+    {
+      "time": 360,
+      "value": 30.0,
+      "description": "Ramp pressure to 30 PSI during temperature increase"
+    },
+    {
+      "time": 660,
+      "value": 30.0,
+      "description": "Hold pressure during first temperature hold"
+    },
+    {
+      "time": 1140,
+      "value": 35.0,
+      "description": "Increase pressure to 35 PSI during high temperature phase"
+    },
+    {
+      "time": 1200,
+      "value": 15.0,
+      "description": "Return to initial pressure during cooldown"
+    }
+  ]
+}

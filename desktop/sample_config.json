@@ -1,0 +1,45 @@
+{
+  "serial_port": "COM3",
+  "baud_rate": 115200,
+  "log_directory": "logs",
+  "temperature_profile": [
+    {
+      "time": 0,
+      "value": 50.0
+    },
+    {
+      "time": 60,
+      "value": 75.0
+    },
+    {
+      "time": 120,
+      "value": 100.0
+    },
+    {
+      "time": 300,
+      "value": 125.0
+    },
+    {
+      "time": 600,
+      "value": 100.0
+    }
+  ],
+  "pressure_profile": [
+    {
+      "time": 0,
+      "value": 10.0
+    },
+    {
+      "time": 300,
+      "value": 30.0
+    },
+    {
+      "time": 600,
+      "value": 10.0
+    }
+  ],
+  "ms_gain": 1.0,
+  "ms_offset": 0.0,
+  "sample_rate": 1000,
+  "logging_enabled": true
+}

@@ -1,10 +1,8 @@
-# OpenMS Gas Chromatograph Controller
+# OpenMS Gas Chromatograph Controller (Work in Progress)
 
-A comprehensive system for controlling and monitoring a Gas Chromatograph using an Arduino Mega 2560 and desktop software. This project includes both the Arduino firmware and a Python-based desktop application.
+> **⚠️ Work in Progress:** This repository contains very early-stage, uncalibrated prototype code for an Arduino Mega 2560 GC/MS controller and companion Python CLI. It has not yet been validated on physical gas chromatography hardware and is under active development.
 
-## Project Status
-
-Early prototype / baseline implementation. The Arduino Mega 2560 firmware (dual-PID control loop, analog sensor/MS interface, and serial command parser) and companion Python CLI are implemented and build under PlatformIO, pending closed-loop hardware calibration on physical GC/MS instrumentation.
+A system for controlling and monitoring a Gas Chromatograph using an Arduino Mega 2560 and desktop software. This project includes both the Arduino firmware and a Python-based desktop application.
 
 ## Features
 

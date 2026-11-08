@@ -2,6 +2,10 @@
 
 A comprehensive system for controlling and monitoring a Gas Chromatograph using an Arduino Mega 2560 and desktop software. This project includes both the Arduino firmware and a Python-based desktop application.
 
+## Project Status
+
+Early prototype / baseline implementation. The Arduino Mega 2560 firmware (dual-PID control loop, analog sensor/MS interface, and serial command parser) and companion Python CLI are implemented and build under PlatformIO, pending closed-loop hardware calibration on physical GC/MS instrumentation.
+
 ## Features
 
 - **Dual PID Control**: Precise temperature and pressure regulation with PID algorithms
@@ -39,7 +43,7 @@ A comprehensive system for controlling and monitoring a Gas Chromatograph using 
 1. Install [PlatformIO IDE](https://platformio.org/install/ide) (as a VSCode extension or standalone)
 2. Clone this repository:
    ```
-   git clone https://github.com/yourusername/OpenMS-controller.git
+   git clone https://github.com/brokengadgets/OpenMS-controller.git
    cd OpenMS-controller
    ```
 3. Open the project in PlatformIO IDE

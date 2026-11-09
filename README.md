@@ -102,7 +102,7 @@ A system for controlling and monitoring a Gas Chromatograph using an Arduino Meg
    ```
 3. Install required libraries:
    ```
-   pip install pyserial
+   pip install -r desktop/requirements.txt
    ```
 4. Make the controller script executable (Linux/macOS):
    ```
@@ -371,6 +371,19 @@ The Arduino controller accepts commands in the following format:
 - `SET_MS:gain:offset` - Set MS parameters
 - `SAMPLE_RATE:rate_ms` - Set sample rate
 - `LOGGING:{ON|OFF}` - Enable/disable logging
+- `STATUS` (or `STATUS:GET`) - Request current controller status
+
+### Running Unit Tests
+
+Host unit tests for both the C++ firmware modules and the Python CLI live in `test/`:
+
+```bash
+# C++ firmware unit tests
+g++ -std=c++17 -Wall -Wextra -Werror -Itest/mock -Iinclude test/test_firmware.cpp src/PIDController.cpp src/GCConfig.cpp src/AnalogIO.cpp src/SerialComm.cpp -o /tmp/test_firmware && /tmp/test_firmware
+
+# Python CLI unit tests
+python3 -m unittest discover -s test -v
+```
 
 ## Data Logging
 

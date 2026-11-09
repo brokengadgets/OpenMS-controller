@@ -1,7 +1,9 @@
 #include "SerialComm.h"
+#include <string.h>
 
 SerialComm::SerialComm(GCConfig& configRef) : config(configRef) {
     bufferPos = 0;
+    discardingOverflow = false;
     lastLogTime = 0;
     sampleRate = configRef.getSampleRate();
 }
@@ -16,6 +18,14 @@ void SerialComm::update() {
     // Check for incoming commands
     while (Serial.available() > 0) {
         char c = Serial.read();
+        
+        if (discardingOverflow) {
+            if (c == '\n' || c == '\r') {
+                discardingOverflow = false;
+                bufferPos = 0;
+            }
+            continue;
+        }
         
         // Process on newline or carriage return
         if (c == '\n' || c == '\r') {
@@ -32,10 +42,11 @@ void SerialComm::update() {
         else if (bufferPos < MAX_COMMAND_LENGTH - 1) {
             cmdBuffer[bufferPos++] = c;
         }
-        // Buffer overflow, discard command
+        // Buffer overflow, discard remainder of line until newline
         else {
             sendResponse(CMD_BUFFER_OVERFLOW, "Command too long");
             bufferPos = 0;
+            discardingOverflow = true;
         }
     }
     
@@ -50,6 +61,9 @@ void SerialComm::processCommand() {
     
     // Parse and execute command
     if (config.parseCommand(cmdBuffer)) {
+        if (strcmp(cmdBuffer, "STATUS") == 0 || strcmp(cmdBuffer, "STATUS:GET") == 0) {
+            sendStatus();
+        }
         sendResponse(CMD_OK, "Command executed successfully");
     }
     else {
@@ -97,8 +111,9 @@ void SerialComm::logData(float temperature, float pressure, float msValue) {
 }
 
 void SerialComm::sendStatus() {
-    // Send current status string
-    Serial.println(config.getStatusString());
+    char statusBuffer[128];
+    config.formatStatusString(statusBuffer, sizeof(statusBuffer));
+    Serial.println(statusBuffer);
 }
 
 bool SerialComm::hasCommand() {

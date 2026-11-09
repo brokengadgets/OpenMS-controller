@@ -26,6 +26,14 @@ struct Profile {
     
     // Add a point to the profile
     bool addPoint(unsigned long timeOffset, float setValue) {
+        // Update existing point if timeOffset already exists
+        for (uint8_t i = 0; i < numPoints; i++) {
+            if (points[i].timeOffset == timeOffset) {
+                points[i].setValue = setValue;
+                return true;
+            }
+        }
+        
         if (numPoints >= MAX_PROFILE_POINTS) return false;
         
         points[numPoints] = ProfilePoint(timeOffset, setValue);
@@ -84,9 +92,12 @@ struct Profile {
         // Find the two surrounding points and interpolate
         for (int i = 0; i < numPoints - 1; i++) {
             if (elapsed >= points[i].timeOffset && elapsed < points[i+1].timeOffset) {
+                unsigned long span = points[i+1].timeOffset - points[i].timeOffset;
+                if (span == 0) {
+                    return points[i+1].setValue;
+                }
                 // Linear interpolation between points
-                float timeRatio = (float)(elapsed - points[i].timeOffset) / 
-                                 (points[i+1].timeOffset - points[i].timeOffset);
+                float timeRatio = (float)(elapsed - points[i].timeOffset) / (float)span;
                 
                 return points[i].setValue + timeRatio * (points[i+1].setValue - points[i].setValue);
             }
@@ -143,6 +154,9 @@ public:
     
     // Parse a command string from the desktop software
     bool parseCommand(const char* command);
+    
+    // Format status into a caller-provided buffer (no heap allocation)
+    void formatStatusString(char* buffer, size_t bufferSize) const;
     
     // Generate a status string to send to the desktop software
     String getStatusString() const;

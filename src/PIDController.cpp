@@ -6,6 +6,7 @@ PIDController::PIDController(float kp, float ki, float kd, float outputMin, floa
     this->kd = kd;
     this->outputMin = outputMin;
     this->outputMax = outputMax;
+    this->setpoint = 0.0f;
     
     reset();
 }
@@ -23,15 +24,19 @@ float PIDController::compute(float input) {
     float proportional = kp * error;
     
     // Integral term with anti-windup
-    integral += ki * error * timeChange;
-    if (integral > outputMax) integral = outputMax;
-    else if (integral < outputMin) integral = outputMin;
-    
-    // Derivative term
-    float derivative = 0;
-    if (timeChange > 0) {
-        derivative = kd * (error - lastError) / timeChange;
+    if (timeChange > 0.0f) {
+        integral += ki * error * timeChange;
+        if (integral > outputMax) integral = outputMax;
+        else if (integral < outputMin) integral = outputMin;
     }
+    
+    // Derivative-on-measurement to prevent derivative kick on setpoint changes
+    float derivative = 0.0f;
+    if (hasLastInput && timeChange > 0.0f) {
+        derivative = -kd * (input - lastInput) / timeChange;
+    }
+    lastInput = input;
+    hasLastInput = true;
     lastError = error;
     
     // Calculate output
@@ -41,6 +46,7 @@ float PIDController::compute(float input) {
     if (output > outputMax) output = outputMax;
     else if (output < outputMin) output = outputMin;
     
+    lastOutput = output;
     return output;
 }
 
@@ -73,32 +79,68 @@ float PIDController::getSetpoint() const {
 }
 
 void PIDController::reset() {
-    integral = 0.0;
-    lastError = 0.0;
+    integral = 0.0f;
+    lastError = 0.0f;
+    lastInput = 0.0f;
+    lastOutput = 0.0f;
+    hasLastInput = false;
     lastTime = millis();
-    steadyStateValue = 0.0;
+    steadyStateValue = 0.0f;
+    peakHigh = -1e6f;
+    peakLow = 1e6f;
+    lastCrossTime = 0;
+    oscillationPeriodMs = 0;
+    cycleCount = 0;
     tuningActive = false;
 }
 
 void PIDController::startAutoTune() {
-    // Simple auto-tuning flag - actual implementation would use more complex algorithms
     tuningActive = true;
-    steadyStateValue = 0.0;
-    // In a real implementation, you would use methods like Ziegler-Nichols or relay methods
+    steadyStateValue = setpoint;
+    peakHigh = -1e6f;
+    peakLow = 1e6f;
+    lastCrossTime = millis();
+    oscillationPeriodMs = 0;
+    cycleCount = 0;
 }
 
 bool PIDController::autoTuneStep(float input) {
-    // This is a placeholder for auto-tuning logic
-    // A real implementation would implement methods like relay feedback, step response, etc.
-    
     if (!tuningActive) return false;
     
-    // Simple steady-state detection (just an example, not a real auto-tuning algorithm)
-    steadyStateValue = (steadyStateValue * 0.95) + (input * 0.05);
+    unsigned long now = millis();
+    steadyStateValue = (steadyStateValue * 0.95f) + (input * 0.05f);
     
-    // In a real implementation, this would calculate and set optimal PID parameters
+    if (input > peakHigh) peakHigh = input;
+    if (input < peakLow) peakLow = input;
     
-    return false; // Return true when tuning is complete
+    // Relay feedback step around setpoint
+    float prevOutput = lastOutput;
+    lastOutput = (input < setpoint) ? outputMax : outputMin;
+    lastError = setpoint - input;
+    
+    // Detect upward relay switching (crossing setpoint from above to below)
+    if (prevOutput == outputMin && lastOutput == outputMax) {
+        if (lastCrossTime > 0 && now > lastCrossTime) {
+            oscillationPeriodMs = now - lastCrossTime;
+            cycleCount++;
+        }
+        lastCrossTime = now;
+    }
+    
+    // Complete after 4 full oscillation cycles with valid amplitude and period
+    float amplitude = (peakHigh - peakLow) * 0.5f;
+    if (cycleCount >= 4 && amplitude > 0.01f && oscillationPeriodMs > 0) {
+        float relayStep = (outputMax - outputMin) * 0.5f;
+        float ku = (4.0f * relayStep) / (3.14159265f * amplitude);
+        float tu = oscillationPeriodMs / 1000.0f;
+        
+        // Classic Ziegler-Nichols PID tuning
+        setTunings(0.6f * ku, (1.2f * ku) / tu, 0.075f * ku * tu);
+        tuningActive = false;
+        return true;
+    }
+    
+    return false;
 }
 
 void PIDController::stopAutoTune() {
@@ -106,7 +148,7 @@ void PIDController::stopAutoTune() {
 }
 
 float PIDController::getLastOutput() const {
-    return lastError + kp; // This is just a proxy to estimate last output
+    return lastOutput;
 }
 
 float PIDController::getCurrentError() const {

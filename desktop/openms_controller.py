@@ -17,11 +17,18 @@ import argparse
 import csv
 import json
 import os
+import queue
+import select
 import sys
+import threading
 import time
 from datetime import datetime
-import serial
-import serial.tools.list_ports
+
+try:
+    import serial
+    import serial.tools.list_ports
+except ImportError:  # pragma: no cover - allows unit tests / --save-config without pyserial
+    serial = None
 
 # Default configuration
 DEFAULT_CONFIG = {
@@ -48,6 +55,10 @@ class OpenMSController:
         
     def connect(self, port=None, baud_rate=None):
         """Connect to the Arduino controller"""
+        if serial is None:
+            print("Error: pyserial is not installed. Run 'pip install pyserial'.")
+            return False
+
         port = port or self.config.get("serial_port", "")
         baud_rate = baud_rate or self.config.get("baud_rate", 115200)
         
@@ -60,7 +71,8 @@ class OpenMSController:
             
             # Look for Arduino-like devices
             for p in ports:
-                if "Arduino" in p.description or "CH340" in p.description or "USB Serial" in p.description:
+                desc = p.description or ""
+                if "Arduino" in desc or "CH340" in desc or "USB Serial" in desc or "ACM" in (p.device or ""):
                     port = p.device
                     print(f"Auto-detected Arduino on port {port}")
                     break
@@ -75,18 +87,19 @@ class OpenMSController:
             # Wait for Arduino to reset
             time.sleep(2)
             
-            # Flush any pending data
-            self.serial_conn.reset_input_buffer()
-            self.serial_conn.reset_output_buffer()
-            
-            # Read welcome message
-            response = self.read_line()
-            if response:
-                print(f"Connected: {response}")
+            # Drain startup banner lines ("OpenMS Gas Chromatograph Controller...", "Ready...", "Setup complete...")
+            deadline = time.monotonic() + 1.5
+            while time.monotonic() < deadline:
+                if getattr(self.serial_conn, "in_waiting", 0) > 0:
+                    line = self.read_line()
+                    if line:
+                        print(f"Connected: {line}")
+                else:
+                    break
             
             self.running = True
             return True
-        except serial.SerialException as e:
+        except Exception as e:
             print(f"Error connecting to {port}: {e}")
             return False
     
@@ -102,27 +115,43 @@ class OpenMSController:
             self.data_file = None
             self.csv_writer = None
             
-    def send_command(self, command):
-        """Send a command to the Arduino controller"""
+    def send_command(self, command, timeout=2.0):
+        """Send a command to the Arduino controller and wait for its RESP: frame"""
         if not self.serial_conn or not self.serial_conn.is_open:
             print("Error: Not connected to controller")
             return False
             
         try:
-            # Add newline if not present
-            if not command.endswith('\n'):
-                command += '\n'
+            clean_cmd = command.strip()
+            if not clean_cmd:
+                return False
+            wire_cmd = clean_cmd + '\n'
                 
-            self.serial_conn.write(command.encode('utf-8'))
+            self.serial_conn.write(wire_cmd.encode('utf-8'))
             self.serial_conn.flush()
             
-            # Wait for response
-            response = self.read_line()
-            if response:
-                print(f"Response: {response}")
+            # Read lines until we get the command response (RESP:<code>:<message>),
+            # while routing any interleaved DATA: or STATUS: frames properly.
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                line = self.read_line()
+                if line is None:
+                    break
+                if line.startswith("DATA:"):
+                    self.process_data_line(line)
+                elif line.startswith("CMD:"):
+                    continue
+                elif line.startswith("STATUS:"):
+                    print(f"Status: {line}")
+                elif line.startswith("RESP:"):
+                    print(f"Response: {line}")
+                    parts = line.split(":", 2)
+                    return len(parts) >= 2 and parts[1] == "0"
+                else:
+                    print(f"< {line}")
                 
-            return True
-        except serial.SerialException as e:
+            return False
+        except Exception as e:
             print(f"Error sending command: {e}")
             return False
     
@@ -132,13 +161,13 @@ class OpenMSController:
             return None
             
         try:
-            line = self.serial_conn.readline().decode('utf-8').strip()
+            raw = self.serial_conn.readline()
+            if not raw:
+                return None
+            line = raw.decode('utf-8', errors='replace').strip()
             return line if line else None
-        except serial.SerialException as e:
+        except Exception as e:
             print(f"Error reading from serial: {e}")
-            return None
-        except UnicodeDecodeError:
-            # Handle garbage data
             return None
     
     def start_data_logging(self):
@@ -234,8 +263,9 @@ class OpenMSController:
                 
             print(f"Loaded profile from {filename}")
             
-            # Apply profiles to controller
-            self.apply_profiles()
+            # Apply profiles to controller if connected
+            if self.serial_conn and self.serial_conn.is_open:
+                self.apply_profiles()
             return True
         except (IOError, json.JSONDecodeError) as e:
             print(f"Error loading profile: {e}")
@@ -306,6 +336,114 @@ class OpenMSController:
         # Update config
         self.config["logging_enabled"] = enabled
     
+    def monitor_run(self, profile_type="ALL"):
+        """Monitor an active profile run until completion (non-interactive mode)"""
+        if not self.running:
+            print("Error: Not connected to controller")
+            return False
+
+        profile_type = profile_type.upper()
+        watch_temp = profile_type in ("TEMP", "ALL") and bool(self.config.get("temperature_profile"))
+        watch_press = profile_type in ("PRESS", "ALL") and bool(self.config.get("pressure_profile"))
+
+        if not watch_temp and not watch_press:
+            # Even if profile points came directly from the controller, watch the requested channels
+            watch_temp = profile_type in ("TEMP", "ALL")
+            watch_press = profile_type in ("PRESS", "ALL")
+
+        print(f"Monitoring {profile_type} profile run (Ctrl+C to abort)...")
+        try:
+            if self.config.get("logging_enabled", True):
+                self.start_data_logging()
+
+            temp_done = not watch_temp
+            press_done = not watch_press
+
+            while self.running and not (temp_done and press_done):
+                line = self.read_line()
+                if not line:
+                    continue
+
+                if line.startswith("DATA:"):
+                    self.process_data_line(line)
+                elif line.startswith("STATUS:"):
+                    parts = line.split(":")
+                    # Format: STATUS:temp_active:temp_setpoint:press_active:press_setpoint:...
+                    if len(parts) >= 5:
+                        if watch_temp and parts[1] == "0":
+                            temp_done = True
+                        if watch_press and parts[3] == "0":
+                            press_done = True
+                elif "Temperature profile completed" in line:
+                    print(f"< {line}")
+                    temp_done = True
+                elif "Pressure profile completed" in line:
+                    print(f"< {line}")
+                    press_done = True
+                else:
+                    print(f"< {line}")
+
+            print("Profile run completed.")
+            return True
+        except KeyboardInterrupt:
+            print("\nRun interrupted by user; stopping profiles...")
+            self.stop_profile(profile_type)
+            return False
+        finally:
+            if self.data_file:
+                self.data_file.close()
+                self.data_file = None
+                self.csv_writer = None
+                self.logger_active = False
+
+    def handle_interactive_command(self, cmd):
+        """Process a single interactive user command. Returns False if user requested quit."""
+        cmd = cmd.strip()
+        if not cmd:
+            return True
+
+        if cmd == ":quit":
+            return False
+        elif cmd == ":help":
+            print("Interactive mode commands:")
+            print("  :help         - Show this help")
+            print("  :quit         - Exit the program")
+            print("  :start        - Start logging data")
+            print("  :stop         - Stop logging data")
+            print("  :run temp     - Start temperature profile")
+            print("  :run press    - Start pressure profile")
+            print("  :run all      - Start all profiles")
+            print("  :stop temp    - Stop temperature profile")
+            print("  :stop press   - Stop pressure profile")
+            print("  :stop all     - Stop all profiles")
+            print("  :status       - Request status from controller")
+        elif cmd == ":start":
+            self.start_data_logging()
+        elif cmd == ":stop":
+            if self.data_file:
+                self.data_file.close()
+                self.data_file = None
+                self.csv_writer = None
+                self.logger_active = False
+                print("Stopped data logging")
+        elif cmd == ":run temp":
+            self.start_profile("TEMP")
+        elif cmd == ":run press":
+            self.start_profile("PRESS")
+        elif cmd == ":run all":
+            self.start_profile("ALL")
+        elif cmd == ":stop temp":
+            self.stop_profile("TEMP")
+        elif cmd == ":stop press":
+            self.stop_profile("PRESS")
+        elif cmd == ":stop all":
+            self.stop_profile("ALL")
+        elif cmd == ":status":
+            self.send_command("STATUS")
+        else:
+            self.send_command(cmd)
+        return True
+
     def run_interactive(self):
         """Run in interactive mode, reading from serial and processing commands"""
         if not self.running:
@@ -326,6 +464,22 @@ class OpenMSController:
         print("  :stop all     - Stop all profiles")
         print("  :status       - Request status from controller")
         
+        input_queue = queue.Queue()
+
+        def _stdin_reader():
+            while self.running:
+                try:
+                    line = sys.stdin.readline()
+                    if not line:
+                        input_queue.put(":quit")
+                        break
+                    input_queue.put(line.strip())
+                except Exception:
+                    break
+
+        reader_thread = threading.Thread(target=_stdin_reader, daemon=True)
+        reader_thread.start()
+
         try:
             # Start data logger
             if self.config.get("logging_enabled", True):
@@ -333,7 +487,7 @@ class OpenMSController:
             
             while self.running:
                 # Check for serial data
-                while self.serial_conn and self.serial_conn.in_waiting > 0:
+                while self.serial_conn and getattr(self.serial_conn, "in_waiting", 0) > 0:
                     line = self.read_line()
                     if line:
                         if line.startswith("DATA:"):
@@ -341,51 +495,13 @@ class OpenMSController:
                         else:
                             print(f"< {line}")
                 
-                # Check for user input (non-blocking)
-                if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
-                    cmd = input().strip()
-                    
-                    if cmd == ":quit":
+                # Check for user input from queue (cross-platform non-blocking)
+                try:
+                    cmd = input_queue.get_nowait()
+                    if not self.handle_interactive_command(cmd):
                         break
-                    elif cmd == ":help":
-                        print("Interactive mode commands:")
-                        print("  :help         - Show this help")
-                        print("  :quit         - Exit the program")
-                        print("  :start        - Start logging data")
-                        print("  :stop         - Stop logging data")
-                        print("  :run temp     - Start temperature profile")
-                        print("  :run press    - Start pressure profile")
-                        print("  :run all      - Start all profiles")
-                        print("  :stop temp    - Stop temperature profile")
-                        print("  :stop press   - Stop pressure profile")
-                        print("  :stop all     - Stop all profiles")
-                        print("  :status       - Request status from controller")
-                    elif cmd == ":start":
-                        self.start_data_logging()
-                    elif cmd == ":stop":
-                        if self.data_file:
-                            self.data_file.close()
-                            self.data_file = None
-                            self.csv_writer = None
-                            self.logger_active = False
-                            print("Stopped data logging")
-                    elif cmd == ":run temp":
-                        self.start_profile("TEMP")
-                    elif cmd == ":run press":
-                        self.start_profile("PRESS")
-                    elif cmd == ":run all":
-                        self.start_profile("ALL")
-                    elif cmd == ":stop temp":
-                        self.stop_profile("TEMP")
-                    elif cmd == ":stop press":
-                        self.stop_profile("PRESS")
-                    elif cmd == ":stop all":
-                        self.stop_profile("ALL")
-                    elif cmd == ":status":
-                        self.send_command("STATUS")
-                    else:
-                        # Send command directly to controller
-                        self.send_command(cmd)
+                except queue.Empty:
+                    pass
                 
                 # Sleep to prevent CPU hogging
                 time.sleep(0.01)
@@ -398,6 +514,7 @@ class OpenMSController:
                 self.data_file.close()
                 self.data_file = None
                 self.csv_writer = None
+                self.logger_active = False
     
 def main():
     """Main entry point for the program"""
@@ -463,6 +580,23 @@ def main():
     if args.sample_rate is not None:
         controller.config["sample_rate"] = args.sample_rate
     
+    # Load profile into config before saving or connecting
+    if args.profile:
+        if not controller.load_profile(args.profile):
+            sys.exit(1)
+    
+    # Save configuration if specified (works even offline if no hardware action is requested)
+    needs_connection = bool(
+        args.interactive
+        or args.run_profile
+        or args.command
+        or not args.save_config
+    )
+    if args.save_config and not needs_connection:
+        if not controller.save_config(args.save_config):
+            sys.exit(1)
+        return
+    
     # Connect to the controller
     if not controller.connect():
         sys.exit(1)
@@ -481,9 +615,12 @@ def main():
         if args.no_log:
             controller.set_logging(False)
         
-        # Load and apply profile if specified
-        if args.profile:
-            controller.load_profile(args.profile)
+        # Apply profile to connected controller if loaded from --profile or --config
+        if args.profile or (
+            args.config
+            and (controller.config.get("temperature_profile") or controller.config.get("pressure_profile"))
+        ):
+            controller.apply_profiles()
         
         # Run profile if specified
         if args.run_profile:
@@ -499,13 +636,11 @@ def main():
         
         # Run in interactive mode if specified
         if args.interactive:
-            # Need to import select module for interactive mode
-            import select
             controller.run_interactive()
-        # If no interactive mode and no commands, run interactively anyway
-        elif not (args.command or args.run_profile):
+        elif args.run_profile:
+            controller.monitor_run(args.run_profile.upper())
+        elif not args.command and not args.save_config:
             print("No command specified, running in interactive mode")
-            import select
             controller.run_interactive()
     
     finally:

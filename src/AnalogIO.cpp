@@ -9,13 +9,16 @@ AnalogIO::AnalogIO(uint8_t tempPin, uint8_t pressPin, uint8_t msInPin, uint8_t m
     heaterOutputPin = heaterPin;
     pressureOutputPin = pressControlPin;
     
-    // Default calibration (identity)
-    tempSensorOffset = 0.0;
-    tempSensorGain = 1.0;
-    pressSensorOffset = 0.0;
-    pressSensorGain = 1.0;
-    msInputOffset = 0.0;
-    msInputGain = 1.0;
+    // Default linear calibration matching 0-5V ADC input ranges:
+    // Temperature: 0-5V -> 0-250 °C (50 °C/V)
+    // Pressure:    0-5V -> 0-100 PSI (20 PSI/V)
+    // MS input:    0-5V -> 0-5 V (1 V/V)
+    tempSensorOffset = 0.0f;
+    tempSensorGain = 50.0f;
+    pressSensorOffset = 0.0f;
+    pressSensorGain = 20.0f;
+    msInputOffset = 0.0f;
+    msInputGain = 1.0f;
     
     // Initialize values
     temperatureValue = 0.0;

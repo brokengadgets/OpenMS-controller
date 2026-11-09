@@ -54,6 +54,9 @@ public:
     void setHeaterOutput(float value);    // 0.0 to 100.0 (percentage)
     void setPressureOutput(float value);  // 0.0 to 100.0 (percentage)
     void setMSOutput(float value);        // 0.0 to 100.0 (percentage)
+    int getHeaterPWM() const { return heaterOutputValue; }
+    int getPressurePWM() const { return pressureOutputValue; }
+    int getMSPWM() const { return msOutputValue; }
     
     // Calibration
     void calibrateTemperature(float offset, float gain);

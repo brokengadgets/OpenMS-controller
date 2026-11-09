@@ -12,7 +12,10 @@ private:
     
     // PID internal variables
     float setpoint;         // Desired value
-    float lastError;        // Last error for derivative calculation
+    float lastError;        // Last error
+    float lastInput;        // Last measurement (for derivative-on-measurement)
+    float lastOutput;       // Last computed output
+    bool hasLastInput;      // Whether lastInput has been initialized
     float integral;         // Accumulated integral
     float outputMin;        // Output limits
     float outputMax;
@@ -20,6 +23,11 @@ private:
     
     // System identification and analysis
     float steadyStateValue; // Used for auto-tuning and monitoring
+    float peakHigh;         // Relay auto-tune peak tracking
+    float peakLow;          // Relay auto-tune trough tracking
+    unsigned long lastCrossTime; // Last relay zero-crossing timestamp
+    unsigned long oscillationPeriodMs; // Measured oscillation period
+    uint8_t cycleCount;     // Number of relay cycles observed
     bool tuningActive;      // Flag for auto-tuning
 
 public:

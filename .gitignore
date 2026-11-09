@@ -1,5 +1,16 @@
 # Environment
 .vscode/
+.pio/
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Runtime logs
+logs/
+desktop/logs/
 
 # Prerequisites
 *.d

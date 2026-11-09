@@ -18,6 +18,7 @@ private:
     // Command buffer
     char cmdBuffer[MAX_COMMAND_LENGTH];
     uint8_t bufferPos;
+    bool discardingOverflow;
     
     // Configuration reference
     GCConfig& config;

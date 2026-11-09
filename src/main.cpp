@@ -64,49 +64,57 @@ void loop() {
     float currentPress = analogIO.getPressure();
     float msValue = analogIO.getMSValue();
     
-    // Get setpoints from active profiles
+    // Check if active profiles have reached their final time point
+    if (config.getTemperatureProfile().active && config.getTemperatureProfile().isComplete()) {
+      config.getTemperatureProfile().stop();
+      tempPID.reset();
+      analogIO.setHeaterOutput(0.0f);
+      Serial.println("Temperature profile completed");
+    }
+    
+    if (config.getPressureProfile().active && config.getPressureProfile().isComplete()) {
+      config.getPressureProfile().stop();
+      pressPID.reset();
+      analogIO.setPressureOutput(0.0f);
+      Serial.println("Pressure profile completed");
+    }
+    
+    // Update temperature control when profile is active; otherwise keep heater off
     if (config.getTemperatureProfile().active) {
       float tempSetpoint = config.getTemperatureProfile().getCurrentSetpoint();
       tempPID.setSetpoint(tempSetpoint);
+      float heaterOutput = tempPID.compute(currentTemp);
+      analogIO.setHeaterOutput(heaterOutput);
+    } else {
+      tempPID.reset();
+      analogIO.setHeaterOutput(0.0f);
     }
     
+    // Update pressure control when profile is active; otherwise keep valve/pump off
     if (config.getPressureProfile().active) {
       float pressSetpoint = config.getPressureProfile().getCurrentSetpoint();
       pressPID.setSetpoint(pressSetpoint);
+      float pressureOutput = pressPID.compute(currentPress);
+      analogIO.setPressureOutput(pressureOutput);
+    } else {
+      pressPID.reset();
+      analogIO.setPressureOutput(0.0f);
     }
     
-    // Compute PID outputs
-    float heaterOutput = tempPID.compute(currentTemp);
-    float pressureOutput = pressPID.compute(currentPress);
-    
-    // Set outputs to actuators
-    analogIO.setHeaterOutput(heaterOutput);
-    analogIO.setPressureOutput(pressureOutput);
-    
-    // Set MS output based on configured gain/offset
+    // Set MS output (0-100% PWM) scaled from calibrated 0-5V MS signal
     float msGain = config.getMSGain();
     float msOffset = config.getMSOffset();
-    float msOutputValue = (msValue * msGain) + msOffset;
-    analogIO.setMSOutput(msOutputValue);
+    float calibratedMSVolts = (msValue * msGain) + msOffset;
+    float msOutputPercent = (calibratedMSVolts / 5.0f) * 100.0f;
+    analogIO.setMSOutput(msOutputPercent);
     
     // Log data if enabled
-    serialComm.logData(currentTemp, currentPress, msValue);
+    serialComm.logData(currentTemp, currentPress, calibratedMSVolts);
   }
   
   // Send periodic status updates
   if (currentTime - lastStatusUpdate >= statusUpdateInterval) {
     lastStatusUpdate = currentTime;
     serialComm.sendStatus();
-    
-    // Check if profiles are complete
-    if (config.getTemperatureProfile().active && config.getTemperatureProfile().isComplete()) {
-      config.getTemperatureProfile().stop();
-      Serial.println("Temperature profile completed");
-    }
-    
-    if (config.getPressureProfile().active && config.getPressureProfile().isComplete()) {
-      config.getPressureProfile().stop();
-      Serial.println("Pressure profile completed");
-    }
   }
 }
